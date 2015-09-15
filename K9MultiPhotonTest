@@ -1,8 +1,6 @@
 // This #include statement was automatically added by the Spark IDE.
 #include "Particle-OneWire/Particle-OneWire.h"
 
-// This #include statement was automatically added by the Spark IDE.
-//#include "OneWire/OneWire.h"
 
 /**     PPPPP   H   H    OOO   TTTTT   OOO   N    N
  *      P   P   H   H   O   O    T    O   O  NN   N
