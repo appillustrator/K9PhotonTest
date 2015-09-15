@@ -1,0 +1,855 @@
+// This #include statement was automatically added by the Spark IDE.
+#include "Particle-OneWire/Particle-OneWire.h"
+
+// This #include statement was automatically added by the Spark IDE.
+//#include "OneWire/OneWire.h"
+
+/**     PPPPP   H   H    OOO   TTTTT   OOO   N    N
+ *      P   P   H   H   O   O    T    O   O  NN   N
+ *      P   P   HHHHH   O   O    T    O   O  N N  N
+ *      PPPP    H   H   O   O    T    O   O  N  N N
+ *      P       H   H   O   O    T    O   O  N   NN
+ *      P       H   H    OOO     T     OOO   N    N 
+ *  
+ * 
+ ******************************************************************************
+ * MultiFunction Function
+ * MultiSwitch Multiple Switch Variable
+ * MultiVal Multiple Value Variable
+ * Temperature Sensing
+ * Motion Sensing
+ * Pusingbox notifications 
+ * 
+ * 
+ * ****************************************************************************
+ */
+
+/* Includes ------------------------------------------------------------------*/  
+//#include "application.h"
+
+
+
+OneWire one = OneWire(D6);  //Temp Sensor D280 Pin
+uint8_t rom[8];
+uint8_t resp[9];
+//char szInfo[64];
+char cTempF[64];
+char highTempValS[64];
+char overTempValS[64];
+
+//   MultiSwitch Variable String ------------------------
+//  Current String switch/flag variables (in order):
+//  (notifyEnable,relaysEnable,highTempOverride,overTempOverride,
+//   highTempEnable,overTempEnable,ledEnable,sleepEnable,rTimerEnable)
+//
+
+char multiSwitch[64];
+
+//   MultiVal Variable String ------------------------
+//  Current String values variables (in order):
+//  (highTempVal,overTempVal,rTimerVal)
+//
+char multiVal[64];
+char wigValueS[64];
+// Temperature settings
+int highTempFlag =0;    //Flag for heatflag / D3 Relay 4 aux fan
+int highTempVal = 97; // high temp trigger value
+int highTempEnable = 1;
+int highTempOverride = 0;
+
+int overTempFlag =0; //Flag for overheat D1 Relay 2 Alert
+int overTempVal = 115; // OverTemperature trigger value
+int overTempEnable = 1;
+int overTempOverride = 0;
+
+int somestring;
+
+// Motion Sensor 
+int motionFlag=0;
+int motionVal=0;
+int pirState=0;
+int pirEnable=1;
+int pirPulseCount=1;
+int motionPin=D5;
+int pulseCount=1;
+int pulseCounter=0;
+int pirLedEnable=1;
+
+
+// other
+int wigValueI = 0;
+int wigSwitch = 0;
+
+
+int relaysEnable = 1;
+int notifyEnable = 1;
+int sleepEnable = 0;
+int ledEnable = 1;
+int rTimerEnable = 0;
+int rTimerVal=15;
+
+uint32_t UPDATE_INTERVAL = 10; // in milliseconds
+uint32_t FIFTEEN_MINUTES = 60*15*1000; // in milliseconds
+uint32_t lastTime = 0; // in milliseconds
+uint32_t startTime = 0; // in milliseconds
+uint32_t remainTime = 0;
+uint32_t lastTime30Seconds = 0; // in milliseconds
+
+
+// int wigvalnum = 0;
+
+//Flag on boot/restart only to avoid first-pass activation of notifications/relays
+int startFlag=0;  
+
+
+////--------------------------
+// General code from http://www.pushingbox.com for Spark Core v1.0
+ // MODIFY HERE //
+//
+// Your secret DevID from PushingBox.com. You can use multiple DevID  on multiple Pin if you want
+const char * DEVID1 = "devID1";         // Scenario: HOT "Temp over 85"
+const char * DEVID2 = "devID2";         // Scenario: VERY HOT "Temp over 95"
+const char * DEVID3 = "devID3";         // Scenario: "15 minute reminder"
+
+// Debug mode
+boolean DEBUG = false;
+
+ //   End    //
+//
+
+
+const char * serverName = "api.pushingbox.com";   // PushingBox API URL
+boolean heatState = false;             // Save the last state for DEVID1
+boolean overheatState = false;         // Save the last state for DEVID2
+
+TCPClient client;
+
+
+/* This function is called once at start up ----------------------------------*/
+void setup()
+{
+
+    Spark.function("multiwig", multiwidget);
+
+	Spark.variable("cTempF", &cTempF, STRING);
+
+    Spark.variable("multiSwitch", multiSwitch, STRING);
+    Spark.variable("multiVal", multiVal, STRING);
+
+
+    Spark.variable("highTempVal", &highTempValS, STRING);    
+    Spark.variable("overTempVal", &overTempValS, STRING);    
+    Spark.variable("remainTime", &remainTime, INT);
+
+
+//    Spark.variable("pirstate", &pirState, STRING);
+//    Spark.variable("motionval", &motionVal, STRING);
+//    Spark.variable("startflag", &startFlag, STRING);    
+    
+
+
+
+    Serial.begin(9600);  
+ 
+ 
+ // pin I/O Definitions
+ 
+    pinMode(motionPin, INPUT);
+    
+    pinMode(A0, OUTPUT);      // green LED
+    pinMode(D3, OUTPUT);      // aux fan  Relay 4
+    
+    pinMode(A1, OUTPUT);      // yellow LED    
+ 
+    pinMode(A6, OUTPUT);      // red LED    
+    pinMode(A7, OUTPUT);      // overheat alert  Relay 3
+    
+
+}
+
+/* This function loops forever --------------------------------------------*/
+void loop()
+{
+
+// Get the ROM address
+    one.reset();
+    one.write(0x33);
+    one.read_bytes(rom, 8);
+// Get the temp
+    one.reset();
+    one.write(0x55);
+    one.write_bytes(rom,8);
+    one.write(0x44);
+    delay(10);
+    one.reset();
+    one.write(0x55);
+    one.write_bytes(rom, 8);
+    one.write(0xBE);
+    one.read_bytes(resp, 9);
+
+    byte MSB = resp[1];
+    byte LSB = resp[0];
+
+    int16_t intTemp = ((MSB << 8) | LSB); //using two's compliment 16-bit
+//    float celsius =   ((double)intTemp)/16.0;
+//    float fahrenheit = (( celsius*9.0)/5.0+27.0);  // was 32
+
+     int16_t celsius =  (intTemp/16);
+     int16_t fahrenheit =  ((celsius*9)/5+30);
+
+
+//    sprintf(szInfo, "T: %2.2f C, %2.2f F", celsius, fahrenheit);
+
+//    sprintf(cTempF, "%3.1f", fahrenheit);
+
+    sprintf(cTempF, "%d", fahrenheit);
+    
+    sprintf(highTempValS, "%d", highTempVal);
+    sprintf(overTempValS, "%d", overTempVal);
+
+
+//Timer ----------------------------------------------------Timer
+    if(millis() - lastTime > UPDATE_INTERVAL) {
+    // Set a new last time
+    lastTime = millis();
+    
+     if(millis() - lastTime30Seconds > 30000) {
+     
+    lastTime30Seconds = millis();
+    //  Publish every 30 seconds   
+    Spark.publish("PTemp", cTempF, PRIVATE);  
+    }
+    
+
+      if(rTimerEnable) {
+          remainTime = ((millis()-startTime)/60000);
+         if(millis() - startTime > FIFTEEN_MINUTES) {
+           sendToPushingBox(DEVID3);    
+           startTime = millis();
+//           rTimerEnable=0;
+           }
+       }
+    }
+
+
+if (startFlag){                    //Flag on boot/restart only to avoid first-pass activation of notifications/relays
+    if (fahrenheit >= 0 && fahrenheit < 180)   //Validity Check
+    {
+       if (fahrenheit >= highTempVal)  
+       {highTempFlag=1;
+      Serial.println(">heatflag Y");   } 
+       else  
+       {highTempFlag=0;
+//      Serial.println(">heatflag N");
+        }
+    
+       if (fahrenheit >= overTempVal)  
+       {overTempFlag=1;
+       Serial.println(">overheatflag Y");   } 
+             else 
+       {overTempFlag=0;
+//      Serial.println(">overheatflag N");
+       }
+    }
+}
+    
+// Motion sensor operation    
+    delay(500);
+    if (pirEnable){
+        readTheSensor();
+        reportTheData();}
+    
+    while (client.available()) {
+    char c = client.read();
+    Serial.print(c);
+}
+    
+    
+
+//  -------------- MAIN TEMPERATURE ACTION CONTROL LOGIC
+//        Controls LEDs, Relays, and Notifications
+
+
+
+    
+////
+// Listening for Temperature over limits to send notification to pushingbox
+////
+    if (!sleepEnable) {
+        updateMultiSwitch();
+        updateMultiVal();
+     if (overTempFlag  && !overheatState ) // Overheat condition actions 
+    {
+        overheatState = 1;
+       updateMultiSwitch();
+       
+       if (relaysEnable && overTempEnable) {
+            pinMode(A7,OUTPUT);
+            digitalWrite(A7, HIGH);}  //turn on overheat alert relay
+       
+        if (ledEnable) {
+            pinMode(A6,OUTPUT);
+            digitalWrite(A6, HIGH);}  //turn on red led
+
+        // Sending request to PushingBox on Overheat
+        if (notifyEnable) {sendToPushingBox(DEVID2);}
+        Spark.publish("PNotification", "multitest Over Temp ", PRIVATE);
+        Spark.publish("PNotification", "Photon temp: " + String(cTempF), 60, PRIVATE);
+    }
+ 
+    else
+     if (highTempFlag  && !heatState) // High Temp condition actions 
+    {
+        heatState = 1;
+        updateMultiSwitch();
+       
+         if (relaysEnable && highTempEnable){
+          pinMode(D3,OUTPUT);
+          digitalWrite(D3, HIGH);}  //turn on aux fan relay
+          
+         if (ledEnable)  {
+             pinMode(A0,OUTPUT);
+             digitalWrite(A0, HIGH);}  //turn on green led
+          
+        // Sending request to PushingBox on High-Temp 
+        if (notifyEnable) {sendToPushingBox(DEVID1);}
+        Spark.publish("PNotification", "multitest4.4 High Temp Condition", PRIVATE);
+        Spark.publish("PNotification", "Photon temp: " + String(cTempF), 60, PRIVATE);
+    }
+    else
+    if (!overTempFlag  && overheatState ) // switch on pinDevid1 is OFF
+    {
+        overheatState = 0;
+        updateMultiSwitch();
+        
+       delay(500);
+      if (!overTempOverride){
+           pinMode(A7,OUTPUT);
+           digitalWrite(A7, LOW);  //turn off overheat alert relay
+           pinMode(A6,OUTPUT);
+           digitalWrite(A6, LOW);  //turn off red led
+        }
+    }
+    else
+     if (!highTempFlag && heatState) // switch on pinDevid1 is OFF
+    {
+        heatState = 0;
+        updateMultiSwitch();
+        
+       delay(500);
+      if (!highTempOverride){
+       pinMode(D3,OUTPUT);
+       digitalWrite(D3, LOW); //turn off aux fan relay
+       pinMode(A0,OUTPUT);
+       digitalWrite(A0, LOW); //turn off green led
+      }
+        //    if (notifyEnable) sendToPushingBox(DEVID2);                               // Here you can run an other scenario by creating a DEVID2 variable
+    }
+   }
+//    int pirVal = digitalRead(motionpin);
+
+ // if (pirVal == LOW){ //was motion detected
+ //   motionflag='Y';
+ //   delay(2000);
+ // }
+    
+
+
+
+    if (!startFlag) startFlag=1;
+    
+//       Spark.publish("tmpinfo", szInfo);
+
+}
+
+
+
+void sendToPushingBox(const char * devid)
+{
+//    digitalWrite(LED, HIGH);          // sets the LED on
+
+
+    Serial.print("closing... ");
+    client.stop();
+    if (client.connect(serverName, 80)) {
+        client.print("GET /pushingbox?devid=");
+        client.print(devid);
+        client.println(" HTTP/1.1");
+        client.print("Host: ");
+        client.println(serverName);
+        client.println("User-Agent: Spark");
+        //client.println("Connection: close");
+        client.println();
+        client.flush();
+//        digitalWrite(LED, LOW);           // sets the LED off
+    } 
+    else{
+//        digitalWrite(LED, HIGH);          // sets the LED on. If always on, last connexion was failed
+        Serial.println("connection failed");
+    }
+}
+  
+// Read motion sensor  
+  void readTheSensor() {
+  motionVal = digitalRead(motionPin);
+}
+
+//Report Motion
+void reportTheData() {
+  if (motionVal) {
+    if (!pirState) {
+      // we have just turned on
+//    Spark.publish("spark-hq/motion");
+//      if (pulsecounter == pulses) {
+//          pulsecounter=0;
+     if (ledEnable && pirLedEnable) {
+          digitalWrite(A1,HIGH);}   // yellow LED On
+//      }
+//      else {
+//          pulsecounter=pulsecounter+1;
+//           }
+            motionFlag=1;
+      // We only want to print on the output change, not state
+      pirState = 1;
+    }
+  } else {
+    if (pirState) {
+      // we have just turned of
+      digitalWrite(A1,LOW);  // yellow LED off
+//      motionflag='N';
+      // We only want to print on the output change, not state
+      pirState = 0;
+    }
+  }
+   delay(500);
+  }  
+
+
+
+//Blink Function:
+//void blinkRed() {
+//    if (stopRed) {stopRed=0;}
+//    
+//     pinMode(A7,OUTPUT);
+//           digitalWrite(A7, LOW);
+//    
+//     pinMode(A7,OUTPUT);
+//           digitalWrite(A7, LOW);
+//}
+
+
+
+
+
+// Build or update MutiSwitch values ------------------------------------------------------
+//
+//
+//  MultiSwitch format in the following order is:
+//  [1]  notifyEnable   - str[0]
+//  [2]  relaysEnable    - str[2]
+//  [3]  highTempOverride    - str[4]
+//  [4]  overTempOverride    - str[6]
+//  [5]  highTempEnable    - str[8]
+//  [6]  overTempEnable   - str[10]
+//  [7]  ledEnable    - str[12]
+//  [8]  sleepEnable    - str[14]
+//  [9]  pirLedEnable   - str[16]
+//  [10]  rTimerEnable   - str[18]
+//  [11] heatState   - str[20]
+//  [12] overheatState   - str[22]
+//  [nn] - <<<<  add more here  >>>>>>>  and to the sprintf below 
+//  
+
+void updateMultiSwitch() {
+
+//Update MultiSwitch Values    
+
+      sprintf(multiSwitch, "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",notifyEnable, relaysEnable, highTempOverride, overTempOverride, highTempEnable, overTempEnable, ledEnable, sleepEnable, pirLedEnable, rTimerEnable, heatState, overheatState);   
+
+
+}
+
+
+
+// Build or update MutiVal values ------------------------------------------------------
+//
+//
+//  MultiVal format in the following order is:
+//  [1]  highTempVal   - str[0]
+//  [2]  overTempVal    - str[2]
+
+//  [nn] - <<<<  add more here  >>>>>>>  and to the sprintf below 
+
+void updateMultiVal() {
+
+//Update MultiVal Values    
+
+      sprintf(multiVal, "%u,%u,",highTempValS, overTempValS);   
+
+
+}
+
+
+
+
+
+// This function multiwidget gets called whenever there is a matching API request
+/*/
+
+Command string format is:  function, value, switch 0/1 or parameter
+                              xxxxx,nnn,nnn
+ for example: PIRPC,005,1    (Pir PulseCount 5 - ON)
+              DREAD,A10,0    (digitalRead pin A1)
+              DWRIT,D20,1    (digitalWrite pin D2 - High/On)
+              AWRIT,A20,1    (analogWrite pin2 - 255)
+
+
+Functions:
+
+PIRPC  PIR Pulsecount and toggle
+PIRWT  PIR Walk-Test LED Switch (on/off)
+DWRIT  digitalWrite
+DREAD  digitalRead
+AWRIT  analogWrite
+AREAD  analogRead
+HTEMP  High Temp setting and on/off
+HTRLY  High Temp Relay Override on/off
+OTEMP  Over Temp setting and on/off
+OTRLY  Over Temp Relay Override on/off
+NOTFY  PushingBox Notification on/off 
+RELAY  Notofications Only - No relay response
+TIMER  Timer reminder setting and on/off
+NOLED  Stealth mode on/off
+SLEEP  Shuts off all processing
+/*/
+
+
+int multiwidget(String wigString)
+{
+ 
+//find command in string (first 5 characters)
+  String wigCommand = String (wigString.substring(0,5)) ;
+ 
+//find value in string (next 3 characters after comma)
+  String wigValueS = (wigString.substring(6,10));
+                
+// Check command start letter for D or A to prevent converting first character of value to a number
+  if (wigCommand.charAt(0) != 'D' && wigCommand.charAt(0) != 'A') 
+      if(DEBUG){Serial.print(">>Command Not D or A:");}
+     int wigValueI = wigValueS.toInt();
+
+//find switch value in string and convert ascii to integer
+
+    String wigSwitchS = (wigString.substring(10,13));
+    wigSwitch = wigSwitchS.toInt();
+
+
+    if(DEBUG){Serial.print(">wigSwitch:");
+        Serial.print(wigSwitch);
+        Serial.print(">wigSwitchS:");
+                Serial.println(wigSwitchS);}
+
+
+
+// Digital Write    -------------------------------------------------------------Digital Write DWRIT 
+   if (wigCommand == "DWRIT")   // Digital Write
+   {
+       	//convert ascii to integer
+	int pinNumber = wigValueS.charAt(1) - '0';
+	//Sanity check to see if the pin numbers are within limits
+	if (pinNumber< 0 || pinNumber >7) return -1;
+
+	if(wigValueS.startsWith("D"))
+	{
+		pinMode(pinNumber, OUTPUT);
+		digitalWrite(pinNumber, wigSwitch);
+		return 1;
+	}
+	else if(wigValueS.startsWith("A"))
+	{
+		pinMode(pinNumber+10, OUTPUT);
+		digitalWrite(pinNumber+10, wigSwitch);
+		return 1;
+	}
+	
+   }
+    else   
+
+// Digital Read     -------------------------------------------------------------Digital Read DREAD
+   if (wigCommand == "DREAD")  
+    {
+         	//convert ascii to integer
+	int pinNumber = wigValueS.charAt(1) - '0';
+	//Sanity check to see if the pin numbers are within limits
+	if (pinNumber< 0 || pinNumber >7) return -1;
+
+	if(wigValueS.startsWith("D"))
+	{
+		pinMode(pinNumber, INPUT_PULLDOWN);
+		return digitalRead(pinNumber);
+	}
+	else if (wigValueS.startsWith("A"))
+	{
+		pinMode(pinNumber+10, INPUT_PULLDOWN);
+		return digitalRead(pinNumber+10);
+	}
+	
+   }
+    
+    else   
+    
+// Analog Read      -------------------------------------------------------------Analog Read AREAD
+   if (wigCommand == "AREAD")
+     {  
+    
+ 	//convert ascii to integer
+	int pinNumber = wigValueS.charAt(1) - '0';
+   
+   if(DEBUG){ 
+       Serial.println("AREAD:");
+       Serial.print(">pinNumber:");
+        Serial.print(pinNumber);
+   }
+
+	//Sanity check to see if the pin numbers are within limits
+	if (pinNumber< 0 || pinNumber >7) return -1;
+
+	if(wigValueS.startsWith("D"))
+	{
+		pinMode(pinNumber, INPUT);
+		return analogRead(pinNumber);
+	}
+	else if (wigValueS.startsWith("A"))
+	{
+		pinMode(pinNumber+10, INPUT);
+		return analogRead(pinNumber+10);
+	}        
+        
+     }
+    else      
+// Anlog Write      -------------------------------------------------------------Analog Write AWRIT
+    if (wigCommand == "AWRIT")
+      {
+           //Pin and Value (0 to 255)
+   
+	//convert ascii to integer
+	int pinNumber = wigValueS.charAt(1) - '0';
+	//Sanity check to see if the pin numbers are within limits
+	if (pinNumber< 0 || pinNumber >7) return -1;
+
+//	String aValueS = wigValueS.substring(3);
+
+if(DEBUG){ 
+       Serial.println("AWRIT:");
+       Serial.print(">pinNumber:");
+        Serial.print(pinNumber);
+       Serial.print(">wigSwitch:");
+        Serial.print(wigSwitch);
+
+   }
+
+
+
+	if(wigValueS.startsWith("D"))
+	{
+		pinMode(pinNumber, OUTPUT);
+		analogWrite(pinNumber, wigSwitch);
+		return 1;
+	}
+	else if(wigValueS.startsWith("A"))
+	{
+		pinMode(pinNumber+10, OUTPUT);
+		analogWrite(pinNumber+10, wigSwitch);
+		return 1;
+	}          
+
+      }
+    else   
+    
+// PIR Pulse Count and toggle ----------------------------------------------------PIR  PIRPC
+    if (wigCommand == "PIRPC")   
+    {
+        if(DEBUG){Serial.print(">PIRPC:");}
+       if (wigValueI >= 0 && wigValueI <= 9) 
+        { 
+            pirPulseCount = wigValueI;
+            pirEnable = wigSwitch;
+            updateMultiSwitch();
+            return 200;
+        }
+    }    
+    else   
+
+// PIR WAlk-test LED toggle ------------------------------------------------------PIR Walk Test  PIRWT
+    if (wigCommand == "PIRWT")   
+     {  
+        if(DEBUG){Serial.print(">PIRPWT");}
+        pirLedEnable = wigSwitch;
+        updateMultiSwitch();        
+         return 200;       
+//        if (wigSwitch == '1') 
+//            int pirLED = HIGH;
+//          else 
+//             int pirLED = LOW;
+     }
+    else      
+
+// High Temp setting and toggle   ------------------------------------------------High Temp HTEMP
+    if (wigCommand == "HTEMP")   
+      {
+       if(DEBUG){ Serial.print(">HTEMP:");
+        Serial.print(">highTempVal before:");
+        Serial.print(highTempVal);}
+        
+        highTempEnable = wigSwitch; 
+      if(DEBUG){Serial.print(">highTempEnable:");
+        Serial.print(highTempEnable);}
+        
+        highTempVal = wigValueI;
+      if(DEBUG){Serial.print(">highTempVal after:");
+        Serial.println(highTempVal);}
+        
+        updateMultiSwitch();
+         return 200;       
+        
+      }
+   else   
+    
+// High Temp Relay Override    ---------------------------------------------------High Temp Relay HTRLY
+    if (wigCommand == "HTRLY")   
+    {
+    if(DEBUG){Serial.print(">HTRLY:");}
+       highTempOverride = wigSwitch; 
+
+       updateMultiSwitch();
+     if(DEBUG){  Serial.println(highTempOverride);  }     
+    if (highTempOverride) {
+        pinMode(D3,OUTPUT);
+        digitalWrite(D3, HIGH);  //turn on high temp aux fan  relay
+         if (ledEnable) {
+           pinMode(A0,OUTPUT);
+           digitalWrite(A0, HIGH);}  //turn on green led
+           return 200; 
+    }
+    else
+    {
+           pinMode(D3,OUTPUT);
+           digitalWrite(D3, LOW);  //turn off high temp /aux fan  relay
+           pinMode(A0,OUTPUT);
+           digitalWrite(A0, LOW);  //turn off green overheat LED
+          return 200;     
+    }
+    }
+    else   
+
+// OverTemp setting and toggle  ---------------------------------------------------Over-Temp OTEMP
+    if (wigCommand == "OTEMP")   
+     {  
+    if(DEBUG){Serial.print(">OTEMP:");}
+        overTempEnable = wigSwitch; 
+        overTempVal = wigValueI;
+        updateMultiSwitch();
+    if(DEBUG){Serial.println(overTempVal);}       
+        return 200;  
+     }
+    else      
+
+// OverTemp Relay Override    ------------------------------------------------------Over-Temp Relay OTRLY
+    if (wigCommand == "OTRLY")   
+      {
+    if(DEBUG){Serial.print(">OTRLY:");}
+       overTempOverride = wigSwitch; 
+    if(DEBUG){Serial.println(overTempOverride);}
+
+    updateMultiSwitch();    
+
+    if (overTempOverride) {
+        pinMode(A7,OUTPUT);
+        digitalWrite(A7, HIGH);  //turn on overheat  relay
+         if (ledEnable) {
+           pinMode(A6,OUTPUT);
+           digitalWrite(A6, HIGH);}  //turn on red led
+           return 200;
+    }
+    else
+    {
+           pinMode(A7,OUTPUT);
+           digitalWrite(A7, LOW);  //turn off overheat alert relay
+           pinMode(A6,OUTPUT);
+           digitalWrite(A6, LOW);  //turn off red overheat LED
+           return 200;
+     }
+     }
+    else   
+    
+// PushingBox Notification toggle  --------------------------------------------PushingBox Notify  NOTFY
+    if (wigCommand == "NOTFY")   
+    {
+      if(DEBUG){ Serial.print(">NOTFY:");}
+      notifyEnable = wigSwitch; 
+        updateMultiSwitch();
+     if(DEBUG){Serial.println(notifyEnable);}    
+        return 200;
+    }
+    else   
+    
+// Relay Operation  toggle  ------------------------------------------------ Relay 
+    if (wigCommand == "RELAY")   
+    {
+       if(DEBUG){ Serial.print(">RELAY:");}    
+       relaysEnable = wigSwitch;
+       updateMultiSwitch();       
+        if(DEBUG){ Serial.println(relaysEnable); }      
+       return 200;
+    }
+   else   
+
+// Timer Reminder setting and  toggle  ------------------------------------------------ TIMER 
+    if (wigCommand == "TIMER")   
+    {
+       if(DEBUG){ Serial.print(">TIMER:");}    
+       rTimerEnable = wigSwitch;
+       updateMultiSwitch();
+       if (rTimerEnable)
+          {startTime = millis();}
+       else
+          {remainTime=0;}
+
+       if (wigValueI >= 1 && wigValueI <= 60) 
+        {rTimerVal = wigValueI;}
+        else     
+        {rTimerVal = 15;}
+        if(DEBUG){ Serial.println(rTimerEnable);
+         Serial.println(rTimerVal);}      
+
+       return 200;
+    }
+   else   
+  
+
+
+// Stealth Mode toggle (all LED functions disabled)  --------------------------Stealth Mode  STEAL
+    if (wigCommand == "NOLED")   
+     {  
+      if(DEBUG){ Serial.print(">NOLED:");}
+       ledEnable = wigSwitch; 
+        updateMultiSwitch();
+       if(DEBUG){Serial.println(ledEnable); }      
+        return 200;
+     }
+    else      
+
+// Shuts off all processing   ---------------------------------------------------------SLEEP
+if (wigCommand == "SLEEP")   
+      {
+      if(DEBUG){Serial.print(">SLEEP:");}
+      sleepEnable = wigSwitch;
+      updateMultiSwitch();
+       if(DEBUG){ Serial.println(sleepEnable); }      
+        return 200;     
+      }
+
+    else 
+    
+   return -1;
+}   
