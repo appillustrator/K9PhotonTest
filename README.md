@@ -1,2 +1,2 @@
 # K9PhotonTest
-Testing for K9 Photon Mobile Sentry - Currently trying to determine source of hight temp readings on DS18B20 and recent firmware releases
+Testing for K9 Photon Mobile Sentry - Basis for current eMU K9 Electron Mobile Sentry tests
